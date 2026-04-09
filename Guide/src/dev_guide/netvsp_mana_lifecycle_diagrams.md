@@ -6,16 +6,10 @@ teardown. Each diagram calls out the key functions involved.
 
 ## 1. VTL2 Startup & MANA Initialization
 
-This diagram shows the boot sequence from the OpenHCL VTL2 entry point
-through MANA hardware discovery and the creation of the synthetic NIC
-offered to the VTL0 guest.
+As the OpenHCL kernel boots, it runs `/underhill-init` as its PID0 process; `underhill-init` then spins up processes to serve the various functions of the firmware. `openvmm_hcl` spawns worker tasks for each of the services it offers; for NICs, it creates a separate instance of `HclNetworkVFManager` for each one attached via `HclNetworkVfManager::new`. The diagram picks up here: `HclNetworkVFManager` then creates a `ManaDevice` object, and once _that_ has finished setting up `GdmaDriver`, the VFManager establishes VPorts for all available endpoints. At this point, `UhVmNetworkSettings` offers the NIC to the VTL0 guest.
 
 ```mermaid
 sequenceDiagram
-    participant Boot as openhcl_boot
-    participant Init as underhill_init
-    participant Core as underhill_core
-    participant Settings as vtl2_settings_worker
     participant Worker as UhVmNetworkSettings
     participant VFMgr as HclNetworkVFManager
     participant MANA as ManaDevice
@@ -23,41 +17,21 @@ sequenceDiagram
     participant NetVSP as netvsp::Nic
     participant VMBus as VmbusServer
 
-    Boot->>Init: exec /underhill-init
-    Note over Init: mount /proc, /sys, /dev<br/>load kernel modules
-    Init->>Core: exec /bin/openvmm_hcl
-
-    Core->>Core: underhill_core::main()<br/>→ do_main() → run_control()
-    Core->>Core: launch_workers()<br/>→ new_underhill_vm()
-
-    Core->>Settings: InitialControllers::new()
-    Settings->>Settings: get_mana_config_from_vtl2_settings()
-    Settings->>Settings: wait_for_mana()<br/>PCI uevent for 1414:00ba
-
-    Core->>Worker: add_network() for each NIC
-
     Worker->>VFMgr: HclNetworkVFManager::new()
     VFMgr->>MANA: create_mana_device()
     Note over VFMgr: VfioDevice::new() opens VFIO handle
 
     MANA->>GDMA: GdmaDriver::new()
-    Note over GDMA: Map BAR0 registers<br/>Write ESTABLISH_HWC<br/>Wait for EQ/interrupt<br/>Read CQ/RQ/SQ/db/pdid/gpa_mkey
-
-    MANA->>GDMA: test_eq()
-    MANA->>GDMA: verify_vf_driver_version()
-    MANA->>GDMA: list_devices()<br/>→ find GDMA_DEVICE_MANA
-    MANA->>GDMA: register_device()
-    MANA->>GDMA: BnicDriver::query_dev_config()
-    MANA->>GDMA: check_vf_resources()
-
+    Note over GDMA: Establish connection<br/>Load resources<br/>Register device
     VFMgr->>MANA: start_notification_task()<br/>subscribe HWC events
     VFMgr->>MANA: subscribe_vf_reconfig()
 
     VFMgr->>VFMgr: connect_endpoints()
-    Note over VFMgr: For each vport:
-    VFMgr->>MANA: device.new_vport()
-    VFMgr->>MANA: vport.set_serial_no()
-    Note over VFMgr: ManaEndpoint::new(vport)<br/>endpoint_control.connect()
+    loop for each vport
+        VFMgr->>MANA: device.new_vport()
+        VFMgr->>MANA: vport.set_serial_no()
+        Note over VFMgr: ManaEndpoint::new(vport)<br/>endpoint_control.connect()
+    end
 
     VFMgr->>VFMgr: HclNetworkVFManagerWorker spawned<br/>→ run() event loop
 
