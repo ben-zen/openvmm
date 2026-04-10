@@ -8,16 +8,6 @@ teardown. Each diagram calls out the key functions involved.
 
 As the OpenHCL kernel boots, it runs `/underhill-init` as its PID0 process; `underhill-init` then spins up processes to serve the various functions of the firmware. `openvmm_hcl` spawns worker tasks for each of the services it offers; for NICs, it creates a separate instance of `HclNetworkVFManager` for each one attached via `HclNetworkVfManager::new`. The diagram picks up here: `HclNetworkVFManager` then creates a `ManaDevice` object, and once _that_ has finished setting up `GdmaDriver`, the VFManager establishes VPorts for all available endpoints. At this point, `UhVmNetworkSettings` offers the NIC to the VTL0 guest.
 
-**Components**
-
-| Diagram Name | Crate Path | Role |
-|---|---|---|
-| UhVmNetworkSettings | `underhill_core::worker::UhVmNetworkSettings` | Orchestrates NIC creation in Underhill |
-| HclNetworkVFManager | `underhill_core::emuplat::netvsp::HclNetworkVFManager` | Manages MANA VF lifecycle |
-| ManaDevice | `mana_driver::mana::ManaDevice` | MANA NIC device abstraction |
-| netvsp::Nic | `netvsp::Nic` | Synthetic NIC VMBus device |
-| VmbusServer | `vmm_core::vmbus_unit` / `vmbus_server::VmbusServer` | VMBus channel management |
-
 ```mermaid
 sequenceDiagram
     participant Worker as UhVmNetworkSettings
@@ -50,7 +40,17 @@ sequenceDiagram
     Note over VMBus: NIC channel offered<br/>to VTL0 guest
 ```
 
-**Citations**
+### Components
+
+| Diagram Name | Crate Path | Role |
+|---|---|---|
+| UhVmNetworkSettings | `underhill_core::worker::UhVmNetworkSettings` | Orchestrates NIC creation in Underhill |
+| HclNetworkVFManager | `underhill_core::emuplat::netvsp::HclNetworkVFManager` | Manages MANA VF lifecycle |
+| ManaDevice | `mana_driver::mana::ManaDevice` | MANA NIC device abstraction |
+| netvsp::Nic | `netvsp::Nic` | Synthetic NIC VMBus device |
+| VmbusServer | `vmm_core::vmbus_unit` / `vmbus_server::VmbusServer` | VMBus channel management |
+
+### Citations
 
 | Diagram Action | Source |
 |---|---|
@@ -75,17 +75,6 @@ sequenceDiagram
 Once the VMBus channel is offered, the VTL0 guest opens it and negotiates
 the NVSP protocol, sets up ring buffers and RNDIS, and receives the VF
 association advertisement.
-
-**Components**
-
-| Diagram Name | Crate Path | Role |
-|---|---|---|
-| VTL0 Guest | _(external)_ | VTL0 guest OS |
-| VMBus Channel | `vmbus_server::VmbusServer` | VMBus transport |
-| Nic (VmbusDevice) | `netvsp::Nic` (`VmbusDevice` impl) | NetVSP device — open / close / start / stop |
-| Coordinator | `netvsp::Coordinator` | Coordinates VF state and worker lifecycle |
-| Primary Worker | `netvsp::Worker` | Processes ring buffer I/O on primary channel |
-| NetChannel | `netvsp::NetChannel` | NVSP protocol negotiation and RNDIS handling |
 
 ```mermaid
 sequenceDiagram
@@ -158,7 +147,18 @@ sequenceDiagram
     Note over Coord: Inform VF via<br/>guest_ready_for_device()
 ```
 
-**Citations**
+### Components
+
+| Diagram Name | Crate Path | Role |
+|---|---|---|
+| VTL0 Guest | _(external)_ | VTL0 guest OS |
+| VMBus Channel | `vmbus_server::VmbusServer` | VMBus transport |
+| Nic (VmbusDevice) | `netvsp::Nic` (`VmbusDevice` impl) | NetVSP device — open / close / start / stop |
+| Coordinator | `netvsp::Coordinator` | Coordinates VF state and worker lifecycle |
+| Primary Worker | `netvsp::Worker` | Processes ring buffer I/O on primary channel |
+| NetChannel | `netvsp::NetChannel` | NVSP protocol negotiation and RNDIS handling |
+
+### Citations
 
 | Diagram Action | Source |
 |---|---|
@@ -182,9 +182,9 @@ sequenceDiagram
 
 When the guest is ready and the VF hardware is available, the data path
 switches from the synthetic NetVSP path through VTL2 to direct VF
-passthrough to the VTL0 guest.
+passthrough to the VTL0 guest. This procedure has been divided into two diagrams, since the halves of the operation involve mostly independent components.
 
-**Components**
+### Components
 
 | Diagram Name | Crate Path | Role |
 |---|---|---|
@@ -230,7 +230,22 @@ sequenceDiagram
     Note over VFMgrWkr: guest_state.offered_to_guest = true
 ```
 
-### 3b. VTL2 
+#### Citations
+
+| Diagram Action | Source |
+|---|---|
+| `startup_vtl2_device()` | [`HclNetworkVFManagerWorker::startup_vtl2_device` in netvsp.rs @ 656](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L656) |
+| `connect_endpoints()` | [`HclNetworkVFManagerWorker::connect_endpoints` in netvsp.rs @ 380](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L380) |
+| `notify_vtl0_vf_arrival()` | [`HclNetworkVFManagerWorker::notify_vtl0_vf_arrival` in netvsp.rs @ 536](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L536) |
+| `update_guest_vf_state()` | [`Coordinator::update_guest_vf_state` in lib.rs (netvsp) @ 4639](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L4639) |
+| `guest_ready_for_device()` (trait) | [`VirtualFunction::guest_ready_for_device` in lib.rs (netvsp) @ 336](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L336) |
+| `guest_ready_for_device()` (impl) | [`HclNetworkVFManagerInstance::guest_ready_for_device` in netvsp.rs @ 1753](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L1753) |
+| `set_vport_ready_and_get_vf_state()` | [`HclNetworkVFManagerInstance` (field callback)` in netvsp.rs @ 1755](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L1755) |
+| `send(AddVtl0VF)` | [`HclNetworkVfManagerMessage::AddVtl0VF` in netvsp.rs @ 1768](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L1768) |
+| Handle `AddVtl0VF` → `offer_device()` | [`HclNetworkVFManagerWorker::run` match arm` in netvsp.rs @ 836](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L836) |
+| `offer_device()` (VTL0 bus) | [`HclVpciBusControl::offer_device` in vpci.rs @ 53](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/vpci.rs#L53) |
+
+### 3b. VTL0 accepts MANA VF & VTL2 switches data paths
 
 ```mermaid
 sequenceDiagram
@@ -278,20 +293,10 @@ sequenceDiagram
     Note over Guest: Data now flows directly<br/>Guest ↔ MANA VF hardware<br/>(bypasses VTL2 synthetic path)
 ```
 
-**Citations**
+#### Citations
 
 | Diagram Action | Source |
 |---|---|
-| `startup_vtl2_device()` | [`HclNetworkVFManagerWorker::startup_vtl2_device` in netvsp.rs @ 656](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L656) |
-| `connect_endpoints()` | [`HclNetworkVFManagerWorker::connect_endpoints` in netvsp.rs @ 380](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L380) |
-| `notify_vtl0_vf_arrival()` | [`HclNetworkVFManagerWorker::notify_vtl0_vf_arrival` in netvsp.rs @ 536](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L536) |
-| `update_guest_vf_state()` | [`Coordinator::update_guest_vf_state` in lib.rs (netvsp) @ 4639](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L4639) |
-| `guest_ready_for_device()` (trait) | [`VirtualFunction::guest_ready_for_device` in lib.rs (netvsp) @ 336](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L336) |
-| `guest_ready_for_device()` (impl) | [`HclNetworkVFManagerInstance::guest_ready_for_device` in netvsp.rs @ 1753](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L1753) |
-| `set_vport_ready_and_get_vf_state()` | [`HclNetworkVFManagerInstance` (field callback)` in netvsp.rs @ 1755](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L1755) |
-| `send(AddVtl0VF)` | [`HclNetworkVfManagerMessage::AddVtl0VF` in netvsp.rs @ 1768](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L1768) |
-| Handle `AddVtl0VF` → `offer_device()` | [`HclNetworkVFManagerWorker::run` match arm` in netvsp.rs @ 836](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/emuplat/netvsp.rs#L836) |
-| `offer_device()` (VTL0 bus) | [`HclVpciBusControl::offer_device` in vpci.rs @ 53](https://github.com/microsoft/openvmm/blob/main/openhcl/underhill_core/src/vpci.rs#L53) |
 | `PacketData::SwitchDataPath {VF}` | [`Message4SwitchDataPath` in protocol.rs @ 473](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/protocol.rs#L473) |
 | `switch_data_path(true)` | [`Worker::switch_data_path` in lib.rs (netvsp) @ 5360](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L5360) |
 | `send_coordinator_update_vf()` | [`NetChannel::send_coordinator_update_vf` in lib.rs (netvsp) @ 3197](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L3197) |
@@ -308,17 +313,6 @@ migration, servicing), or hardware reconfiguration. Two sub-flows
 are shown.
 
 ### 4a. Guest-Initiated Switchback
-
-**Components**
-
-| Diagram Name | Crate Path | Role |
-|---|---|---|
-| VTL0 Guest | _(external)_ | VTL0 guest OS |
-| NetVSP Worker | `netvsp::Worker` | Primary channel worker |
-| Coordinator | `netvsp::Coordinator` | VF state coordinator |
-| ManaEndpoint | `net_mana::ManaEndpoint` | Endpoint adapter |
-| mana_driver::Vport | `mana_driver::mana::Vport` | MANA virtual port |
-| BnicDriver (HWC) | `mana_driver::bnic_driver::BnicDriver` | HW command channel |
 
 ```mermaid
 sequenceDiagram
@@ -353,8 +347,18 @@ sequenceDiagram
 
     Note over Guest: Data now flows through<br/>VTL2 synthetic (NetVSP) path
 ```
+#### Components
 
-**Citations**
+| Diagram Name | Crate Path | Role |
+|---|---|---|
+| VTL0 Guest | _(external)_ | VTL0 guest OS |
+| NetVSP Worker | `netvsp::Worker` | Primary channel worker |
+| Coordinator | `netvsp::Coordinator` | VF state coordinator |
+| ManaEndpoint | `net_mana::ManaEndpoint` | Endpoint adapter |
+| mana_driver::Vport | `mana_driver::mana::Vport` | MANA virtual port |
+| BnicDriver (HWC) | `mana_driver::bnic_driver::BnicDriver` | HW command channel |
+
+#### Citations
 
 | Diagram Action | Source |
 |---|---|
@@ -368,19 +372,6 @@ sequenceDiagram
 | `handle_state_change()` | [`Worker::handle_state_change` in lib.rs (netvsp) @ 2767](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2767) |
 
 ### 4b. VF Removal / Hardware Reconfiguration (Host-Initiated)
-
-**Components**
-
-| Diagram Name | Crate Path | Role |
-|---|---|---|
-| Host / Hardware | _(external)_ | Physical host / NIC hardware |
-| HclNetworkVFManagerWorker | `underhill_core::emuplat::netvsp::HclNetworkVFManagerWorker` | VF lifecycle event loop (receives UEvents) |
-| VirtualFunction Instance | `underhill_core::emuplat::netvsp::HclNetworkVFManagerInstance` | Per-NIC `VirtualFunction` trait impl |
-| Coordinator | `netvsp::Coordinator` | VF state coordinator |
-| NetVSP Worker | `netvsp::Worker` | Primary channel worker |
-| ManaEndpoint | `net_mana::ManaEndpoint` | Endpoint adapter (fallback path) |
-| mana_driver::Vport | `mana_driver::mana::Vport` | MANA virtual port (fallback path) |
-| VTL0 Guest | _(external)_ | VTL0 guest OS |
 
 ```mermaid
 sequenceDiagram
@@ -442,12 +433,26 @@ sequenceDiagram
     Note over Guest: All traffic now flows<br/>through VTL2 synthetic path<br/>(or NIC is fully removed)
 ```
 
-> **Note:** The filter-move sequence in the `opt` block above
+> [!NOTE]
+> The filter-move sequence in the `opt` block above
 > (`ManaEndpoint` → `Vport`) mirrors the full chain shown in
 > Diagram 4a. See that diagram for the complete
 > `set_data_path_to_guest_vf` → `move_filter` → `BnicDriver` flow.
 
-**Citations**
+#### Components
+
+| Diagram Name | Crate Path | Role |
+|---|---|---|
+| Host / Hardware | _(external)_ | Physical host / NIC hardware |
+| HclNetworkVFManagerWorker | `underhill_core::emuplat::netvsp::HclNetworkVFManagerWorker` | VF lifecycle event loop (receives UEvents) |
+| VirtualFunction Instance | `underhill_core::emuplat::netvsp::HclNetworkVFManagerInstance` | Per-NIC `VirtualFunction` trait impl |
+| Coordinator | `netvsp::Coordinator` | VF state coordinator |
+| NetVSP Worker | `netvsp::Worker` | Primary channel worker |
+| ManaEndpoint | `net_mana::ManaEndpoint` | Endpoint adapter (fallback path) |
+| mana_driver::Vport | `mana_driver::mana::Vport` | MANA virtual port (fallback path) |
+| VTL0 Guest | _(external)_ | VTL0 guest OS |
+
+#### Citations
 
 | Diagram Action | Source |
 |---|---|
@@ -470,13 +475,7 @@ sequenceDiagram
 
 ## 5. VF State Machine Summary
 
-The `PrimaryChannelGuestVfState` enum in `netvsp` drives all VF-related
-guest interactions. Here is the complete state machine:
-
-> **Component:** `netvsp::PrimaryChannelGuestVfState`
-> ([`vm/devices/net/netvsp/src/lib.rs`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L528), line 528).
-> Transitions are driven by functions in `netvsp::Worker` and
-> `netvsp::Coordinator`.
+The [`netvsp::PrimaryChannelGuestVfState`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L528) enum drives all VF-related guest interactions. Transitions are driven by methods on [`netvsp::Worker`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L166) and [`netvsp::Coordinator`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L3841) Here is the complete state machine:
 
 ```mermaid
 stateDiagram-v2
@@ -516,7 +515,7 @@ stateDiagram-v2
     Unavailable --> [*]: NIC shutdown
 ```
 
-**Citations**
+### Citations
 
 | State / Transition | Source |
 |---|---|
