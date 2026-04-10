@@ -197,17 +197,18 @@ passthrough to the VTL0 guest.
 | NetVSP Worker | `netvsp::Worker` | Primary channel worker |
 | VTL0 Guest | _(external)_ | VTL0 guest OS |
 
+### 3a. MANA device arrives & VTL2 prepares
+
 ```mermaid
 sequenceDiagram
+    box VTL2
     participant VFMgrWkr as HclNetworkVFManagerWorker
     participant Coord as Coordinator
     participant VFMgrInst as HclNetworkVFManagerInstance
-    participant ManaEP as ManaEndpoint
-    participant Vport as mana_driver::Vport
-    participant BNIC as BnicDriver (HWC)
-    
-    participant NetVSP as NetVSP Worker
+    end
+    box VTL0
     participant Guest as VTL0 Guest
+    end
 
     Note over VFMgrWkr: VF available, VTL2 device started
     VFMgrWkr->>VFMgrWkr: startup_vtl2_device()<br/>→ connect_endpoints()
@@ -227,6 +228,24 @@ sequenceDiagram
     Note over VFMgrWkr: Vtl0Bus::Present →<br/>offer_device()
     VFMgrWkr->>Guest: VTL0 VF PCI device offered
     Note over VFMgrWkr: guest_state.offered_to_guest = true
+```
+
+### 3b. VTL2 
+
+```mermaid
+sequenceDiagram
+    box VTL0
+    participant Guest as VTL0 Guest
+    end
+
+    box VTL2
+    participant NetVSP as NetVSP Worker
+    participant Coord as Coordinator
+    participant ManaEP as ManaEndpoint
+    participant Vport as mana_driver::Vport
+    participant BNIC as BnicDriver (HWC)
+    end
+
 
     Guest->>Guest: Guest OS enumerates VF PCI device<br/>(netvsc driver detects VF arrival)
 
