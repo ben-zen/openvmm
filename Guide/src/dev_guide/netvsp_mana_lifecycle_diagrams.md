@@ -56,7 +56,6 @@ sequenceDiagram
     participant Coord as Coordinator
     participant PriWorker as Primary Worker
     participant Channel as NetChannel
-    participant VF as VirtualFunction
 
     Guest->>VMBus: Open primary channel (idx=0)
     VMBus->>NicDev: open(channel_idx=0)
@@ -68,7 +67,7 @@ sequenceDiagram
     NicDev->>Coord: coordinator.start()
 
     PriWorker->>Channel: NetChannel::initialize()
-    Note over Channel: 1. Negotiate NVSP version<br/>   (Version::V1 through V61)<br/>2. Exchange NDIS version/config<br/>3. Setup receive buffer GPADL<br/>   → ReceiveBuffer::new()<br/>4. Setup send buffer GPADL<br/>   → SendBuffer::new()
+    Note over Channel: 1. Negotiate NVSP version<br/>2. Exchange NDIS version/config<br/>3. Setup send & receive buffer GPADLs
 
     Channel-->>PriWorker: Init complete
     PriWorker->>PriWorker: state → WaitingForCoordinator
@@ -105,9 +104,7 @@ sequenceDiagram
     Coord->>Channel: guest_send_indirection_table()
     Channel->>Guest: MESSAGE5_TYPE_SEND_INDIRECTION_TABLE
 
-    Note over Coord: Check VF availability
-    Coord->>VF: vf.id() → Some(vfid)
-    Note over Coord: guest_vf_state:<br/>Initializing → Available{vfid}
+    Note over Coord: Check VF availability:<br/>if Some(vfid), set guest_vf_state:<br/>Initializing → Available{vfid}
 
     Coord->>PriWorker: stop worker[0]
     PriWorker->>Channel: handle_state_change()
@@ -119,7 +116,7 @@ sequenceDiagram
     Note over Coord: Timer expires → OfferVfDevice
     Coord->>Coord: guest_vf_state:<br/>AvailableAdvertised → Ready
     Coord->>Coord: pending_vf_state → Pending
-    Coord->>VF: guest_ready_for_device()
+    Note over Coord: Inform VF via<br/>guest_ready_for_device()
 ```
 
 ## 3. VF Data Path Switch: Synthetic → VF (Accelerated Networking)
@@ -130,19 +127,20 @@ passthrough to the VTL0 guest.
 
 ```mermaid
 sequenceDiagram
-    participant Guest as VTL0 Guest
-    participant NetVSP as NetVSP Worker
+    participant VFMgrWkr as HclNetworkVFManagerWorker
     participant Coord as Coordinator
     participant VFTrait as VirtualFunction
     participant VFMgrInst as HclNetworkVFManagerInstance
-    participant VFMgrWkr as HclNetworkVFManagerWorker
     participant ManaEP as ManaEndpoint
     participant Vport as mana_driver::Vport
     participant BNIC as BnicDriver (HWC)
+    
+    participant NetVSP as NetVSP Worker
+    participant Guest as VTL0 Guest
 
     Note over VFMgrWkr: VF available, VTL2 device started
     VFMgrWkr->>VFMgrWkr: startup_vtl2_device()<br/>→ connect_endpoints()
-    VFMgrWkr->>VFMgrWkr: notify_vtl0_vf_arrival()
+    VFMgrWkr->>VFMgrInst: notify_vtl0_vf_arrival()
 
     Note over Coord: Coordinator receives<br/>UpdateFromVf notification
     Coord->>Coord: update_guest_vf_state()
