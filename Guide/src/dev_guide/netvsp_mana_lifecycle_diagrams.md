@@ -78,12 +78,17 @@ association advertisement.
 
 ```mermaid
 sequenceDiagram
+    box VTL0
     participant Guest as VTL0 Guest
+    end
+
+    box VTL2
     participant VMBus as VMBus Channel
     participant NicDev as Nic (VmbusDevice)
     participant Coord as Coordinator
     participant PriWorker as Primary Worker
     participant Channel as NetChannel
+    end
 
     Guest->>VMBus: Open primary channel (idx=0)
     VMBus->>NicDev: open(channel_idx=0)
@@ -316,12 +321,16 @@ are shown.
 
 ```mermaid
 sequenceDiagram
+    box VTL0
     participant Guest as VTL0 Guest
+    end
+    box VTL2
     participant NetVSP as NetVSP Worker
     participant Coord as Coordinator
     participant ManaEP as ManaEndpoint
     participant Vport as mana_driver::Vport
     participant BNIC as BnicDriver (HWC)
+    end
 
     Guest->>NetVSP: PacketData::SwitchDataPath<br/>{active_data_path: SYNTHETIC}
     NetVSP->>NetVSP: switch_data_path(use_guest_vf=false)
@@ -375,14 +384,20 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    box AzHost
     participant Host as Host / Hardware
+    end
+    box VTL2
     participant VFMgrWkr as HclNetworkVFManagerWorker
     participant VFMgrInst as VirtualFunction Instance
     participant Coord as Coordinator
     participant NetVSP as NetVSP Worker
     participant ManaEP as ManaEndpoint
     participant Vport as mana_driver::Vport
+    end
+    box VTL0
     participant Guest as VTL0 Guest
+    end
 
     Host->>VFMgrWkr: PCI device removal event
     Note over VFMgrWkr: ManaDeviceRemoved<br/>(via UEvent listener)
@@ -526,24 +541,3 @@ stateDiagram-v2
 | `move_filter()` | [`Vport::move_filter` in mana.rs @ 519](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/mana_driver/src/mana.rs#L519) |
 | `send_completion()` | [`Worker::handle_state_change` in lib.rs (netvsp) @ 2767](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2767) |
 | `guest_vf_data_path_switched_to_synthetic()` | [`NetChannel::guest_vf_data_path_switched_to_synthetic` in lib.rs (netvsp) @ 2735](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2735) |
-
-## Key Source Locations
-
-| Component | File | Key Functions |
-|-----------|------|---------------|
-| VTL2 entry | `openhcl/underhill_entry/src/lib.rs` | `underhill_main()` |
-| VM worker setup | `openhcl/underhill_core/src/worker.rs` | `new_underhill_vm()`, `add_network()`, `new_underhill_nic()` |
-| MANA PCI discovery | `openhcl/underhill_core/src/dispatch/vtl2_settings_worker.rs` | `wait_for_mana()`, `InitialControllers::new()` |
-| VF Manager | `openhcl/underhill_core/src/emuplat/netvsp.rs` | `HclNetworkVFManager::new()`, `HclNetworkVFManagerWorker::run()` |
-| VF Manager lifecycle | `openhcl/underhill_core/src/emuplat/netvsp.rs` | `startup_vtl2_device()`, `connect_endpoints()`, `shutdown_vtl2_device()` |
-| VF Manager guest ops | `openhcl/underhill_core/src/emuplat/netvsp.rs` | `try_notify_guest_and_revoke_vtl0_vf()`, `notify_vtl0_vf_arrival()` |
-| MANA driver init | `vm/devices/net/mana_driver/src/mana.rs` | `ManaDevice::new()`, `start_notification_task()` |
-| GDMA driver | `vm/devices/net/mana_driver/src/gdma_driver.rs` | `GdmaDriver::new()`, `GdmaDriver::restore()` |
-| MANA vport / filter | `vm/devices/net/mana_driver/src/mana.rs` | `Vport::move_filter()`, `Vport::query_filter_state()` |
-| MANA endpoint | `vm/devices/net/net_mana/src/lib.rs` | `ManaEndpoint::new()`, `set_data_path_to_guest_vf()` |
-| NetVSP NIC | `vm/devices/net/netvsp/src/lib.rs` | `Nic::builder()`, `NicBuilder::build()` |
-| NetVSP VMBus device | `vm/devices/net/netvsp/src/lib.rs` | `open()`, `close()`, `start()`, `stop()` |
-| NetVSP coordinator | `vm/devices/net/netvsp/src/lib.rs` | `Coordinator::process()`, `update_guest_vf_state()`, `restore_guest_vf_state()` |
-| NetVSP worker | `vm/devices/net/netvsp/src/lib.rs` | `Worker::process()`, `handle_state_change()`, `switch_data_path()` |
-| NetVSP VF messaging | `vm/devices/net/netvsp/src/lib.rs` | `guest_vf_is_available()`, `guest_vf_data_path_switched_to_synthetic()` |
-| NVSP protocol | `vm/devices/net/netvsp/src/protocol.rs` | `Message4SendVfAssociation`, `Message4SwitchDataPath`, `DataPath` |
