@@ -532,12 +532,31 @@ stateDiagram-v2
 
 ### Citations
 
-| State / Transition | Source |
-|---|---|
-| `PrimaryChannelGuestVfState` enum | [`PrimaryChannelGuestVfState` in lib.rs (netvsp) @ 528](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L528) |
-| `guest_vf_is_available()` | [`NetChannel::guest_vf_is_available` in lib.rs (netvsp) @ 2623](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2623) |
-| `guest_ready_for_device()` | [`VirtualFunction::guest_ready_for_device` in lib.rs (netvsp) @ 336](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L336) |
-| `switch_data_path()` | [`Worker::switch_data_path` in lib.rs (netvsp) @ 5360](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L5360) |
-| `move_filter()` | [`Vport::move_filter` in mana.rs @ 519](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/mana_driver/src/mana.rs#L519) |
-| `send_completion()` | [`Worker::handle_state_change` in lib.rs (netvsp) @ 2767](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2767) |
-| `guest_vf_data_path_switched_to_synthetic()` | [`NetChannel::guest_vf_data_path_switched_to_synthetic` in lib.rs (netvsp) @ 2735](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2735) |
+Each transition below lists the driving function and the diagram section
+where the transition is exercised.
+
+| Transition | Trigger | Diagram Step |
+|---|---|---|
+| `[*]` → `Initializing` | Coordinator created with initial VF state | [§2](#2-adding-a-virtual-nic-to-the-vtl0-guest) |
+| `Initializing` → `Available` | VF `id()` returns `Some(vfid)` during [`Coordinator::update_guest_vf_state`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L4639) | [§2](#2-adding-a-virtual-nic-to-the-vtl0-guest) |
+| `Initializing` → `Unavailable` | VF `id()` returns `None` | [§2](#2-adding-a-virtual-nic-to-the-vtl0-guest) |
+| `Available` → `AvailableAdvertised` | [`NetChannel::guest_vf_is_available(vfid)`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2623) sends `SEND_VF_ASSOCIATION` | [§2](#2-adding-a-virtual-nic-to-the-vtl0-guest) |
+| `AvailableAdvertised` → `Ready` | `VF_DEVICE_DELAY` expires → [`VirtualFunction::guest_ready_for_device()`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L336) | [§2](#2-adding-a-virtual-nic-to-the-vtl0-guest) |
+| `Ready` → `DataPathSwitchPending_toVF` | Guest sends `SwitchDataPath{VF}` → [`Worker::switch_data_path(true)`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L5360) | [§3b](#3b-vtl0-accepts-mana-vf--vtl2-switches-data-paths) |
+| `Ready` → `DataPathSynthetic` | External state change | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `DataPathSwitchPending_toVF` → `DataPathSwitched` | [`Vport::move_filter(1)`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/mana_driver/src/mana.rs#L519) succeeds → [`Worker::handle_state_change`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2767) sends completion | [§3b](#3b-vtl0-accepts-mana-vf--vtl2-switches-data-paths) |
+| `DataPathSwitchPending_toVF` → `DataPathSynthetic` | `move_filter(1)` fails → `send_completion()` | [§3b](#3b-vtl0-accepts-mana-vf--vtl2-switches-data-paths) |
+| `DataPathSwitchPending_toVF` → `UnavailableFromDPSwitchPending` | VF removed during pending switch | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `DataPathSwitched` → `DataPathSwitchPending_toSynth` | Guest sends `SwitchDataPath{SYNTHETIC}` → [`Worker::switch_data_path(false)`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L5360) | [§4a](#4a-guest-initiated-switchback) |
+| `DataPathSwitched` → `UnavailableFromDataPathSwitched` | VF removed while data path switched | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `DataPathSwitchPending_toSynth` → `Ready` | [`Vport::move_filter(0)`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/mana_driver/src/mana.rs#L519) succeeds | [§4a](#4a-guest-initiated-switchback) |
+| `DataPathSwitchPending_toSynth` → `DataPathSwitched` | `move_filter(0)` fails | [§4a](#4a-guest-initiated-switchback) |
+| `DataPathSynthetic` → `Ready` | [`NetChannel::guest_vf_data_path_switched_to_synthetic()`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2735) notifies guest | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `UnavailableFromDataPathSwitched` → `UnavailableFromAvailable` | [`NetChannel::guest_vf_data_path_switched_to_synthetic()`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2735) | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `UnavailableFromDPSwitchPending` → `UnavailableFromDataPathSwitched` | `send_completion()` (was switching to guest) | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `UnavailableFromDPSwitchPending` → `UnavailableFromAvailable` | `send_completion()` (was switching to synthetic) | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `UnavailableFromAvailable` → `Unavailable` | [`NetChannel::guest_vf_is_available(None)`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L2623) sends `SEND_VF_ASSOCIATION{0}` | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `Available` → `UnavailableFromAvailable` | VF removed before advertisement | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `AvailableAdvertised` → `UnavailableFromAvailable` | VF removed after advertisement | [§4b](#4b-vf-removal--hardware-reconfiguration-host-initiated) |
+| `Unavailable` → `Available` | VF arrives again → [`Coordinator::update_guest_vf_state`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/netvsp/src/lib.rs#L4639) | [§3a](#3a-mana-device-arrives--vtl2-prepares) |
+| `Unavailable` → `[*]` | NIC shutdown | [§1](#1-vtl2-startup--mana-initialization) |
