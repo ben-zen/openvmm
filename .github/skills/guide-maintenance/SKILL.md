@@ -141,3 +141,16 @@ Each row in the mapping table follows:
 - Guide paths are relative to `Guide/src/`
 - Multiple Guide pages for one code path: comma-separated
 - Use glob-style `*` in code paths for crate families (e.g., `nvme*/`)
+
+## Doc-Code-Sync Mapping Table
+
+| Code Path | Guide Page(s) |
+|---|---|
+| `vm/devices/net/netvsp/` | `reference/devices/vmbus/netvsp.md`, `reference/devices/vmbus/netvsp_lifecycle.md` |
+| `vm/devices/net/mana_driver/` | `reference/devices/vmbus/netvsp.md`, `reference/devices/vmbus/netvsp_lifecycle.md` |
+| `vm/devices/net/net_mana/` | `reference/devices/vmbus/netvsp.md`, `reference/devices/vmbus/netvsp_lifecycle.md` |
+| `openhcl/underhill_core/src/emuplat/netvsp.rs` | `reference/devices/vmbus/netvsp_lifecycle.md` |
+| `openhcl/underhill_core/src/vpci.rs` | `reference/devices/vmbus/netvsp_lifecycle.md` |
+| `vm/devices/storage/storvsp/` | `reference/devices/vmbus/storvsp.md`, `reference/devices/vmbus/storvsp_channels.md` |
+| `vm/devices/storage/nvme*/` | `reference/emulated/NVMe/overview.md`, `reference/emulated/NVMe/doorbells.md` |
+| `openvmm/openvmm_entry/src/cli_args.rs` | `reference/openvmm/management/cli.md` |
