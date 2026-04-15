@@ -364,7 +364,7 @@ impl<T: DeviceBacking> ManaEndpoint<T> {
             tx_cq_armed: true,
             rx_cq_armed: true,
             vp_offset: tx_config.tx_vport_offset,
-            mem_key: self.vport.gpa_mkey(),
+            mem_key: self.vport.gpa_mkey()?,
             tx_wq: txq.wq(),
             tx_cq: txq.cq(),
             rx_wq: rxq.wq(),

@@ -14,6 +14,7 @@ use crate::queues;
 use crate::queues::Doorbell;
 use crate::queues::DoorbellPage;
 use anyhow::Context;
+use anyhow::anyhow;
 use futures::StreamExt;
 use futures::lock::Mutex;
 use gdma_defs::GdmaDevId;
@@ -31,6 +32,7 @@ use pal_async::driver::SpawnDriver;
 use pal_async::task::Spawn;
 use pal_async::task::Task;
 use std::sync::Arc;
+use std::sync::Weak;
 use tracing::Instrument;
 use user_driver::DeviceBacking;
 use user_driver::DmaClient;
@@ -264,7 +266,7 @@ impl<T: DeviceBacking> ManaDevice<T> {
         let vport_state = vport_state.unwrap_or(VportState::new(None, None));
 
         let vport = Vport {
-            inner: self.inner.clone(),
+            inner_weak: Arc::downgrade(&self.inner),
             config: vport_config,
             vport_state,
             id: index,
@@ -356,13 +358,17 @@ impl VportState {
 
 /// A MANA vport.
 pub struct Vport<T: DeviceBacking> {
-    inner: Arc<Inner<T>>,
+    inner_weak: Weak<Inner<T>>,
     config: ManaQueryVportCfgResp,
     vport_state: VportState,
     id: u32,
 }
 
 impl<T: DeviceBacking> Vport<T> {
+    fn realize_inner(&self) -> anyhow::Result<Arc<Inner<T>>> {
+        self.inner_weak.upgrade().ok_or_else(|| anyhow!("VPort {} is invalid", self.id))
+    }
+
     /// Returns the maximum number of transmit queues.
     pub fn max_tx_queues(&self) -> u32 {
         self.config.max_num_sq
@@ -379,8 +385,9 @@ impl<T: DeviceBacking> Vport<T> {
     }
 
     /// Returns the memory key to refer to all of GPA space.
-    pub fn gpa_mkey(&self) -> u32 {
-        self.inner.dev_data.gpa_mkey
+    pub fn gpa_mkey(&self) -> anyhow::Result<u32> {
+        let inner = self.realize_inner()?;
+        Ok(inner.dev_data.gpa_mkey)
     }
 
     /// Returns this vport's id
@@ -400,30 +407,31 @@ impl<T: DeviceBacking> Vport<T> {
         size: u32,
         cpu: u32,
     ) -> anyhow::Result<BnicEq> {
-        let mut gdma = self.inner.gdma.lock().await;
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
         let dma_client = gdma.device().dma_client_for(DmaPool::Ephemeral)?;
         let mem = dma_client
             .allocate_dma_buffer(size as usize)
             .context("Failed to allocate DMA buffer")?;
 
         let gdma_region = gdma
-            .create_dma_region(arena, self.inner.dev_id, mem.clone())
+            .create_dma_region(arena, inner.dev_id, mem.clone())
             .await
             .context("failed to create eq dma region")?;
         let (id, interrupt) = gdma
             .create_eq(
                 arena,
-                self.inner.dev_id,
+                inner.dev_id,
                 gdma_region,
                 size,
-                self.inner.dev_data.pdid,
-                self.inner.dev_data.db_id,
+                inner.dev_data.pdid,
+                inner.dev_data.db_id,
                 cpu,
             )
             .await
             .context("failed to create eq")?;
         Ok(BnicEq {
-            doorbell: DoorbellPage::new(self.inner.doorbell.clone(), self.inner.dev_data.db_id)?,
+            doorbell: DoorbellPage::new(inner.doorbell.clone(), inner.dev_data.db_id)?,
             mem,
             id,
             interrupt,
@@ -441,7 +449,8 @@ impl<T: DeviceBacking> Vport<T> {
     ) -> anyhow::Result<BnicWq> {
         assert!(wq_size >= PAGE_SIZE as u32 && wq_size.is_power_of_two());
         assert!(cq_size >= PAGE_SIZE as u32 && cq_size.is_power_of_two());
-        let mut gdma = self.inner.gdma.lock().await;
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
 
         let dma_client = gdma.device().dma_client_for(DmaPool::Ephemeral)?;
 
@@ -453,18 +462,18 @@ impl<T: DeviceBacking> Vport<T> {
         let cq_mem = mem.subblock(wq_size as usize, cq_size as usize);
 
         let wq_gdma_region = gdma
-            .create_dma_region(arena, self.inner.dev_id, wq_mem.clone())
+            .create_dma_region(arena, inner.dev_id, wq_mem.clone())
             .await?;
         let cq_gdma_region = gdma
-            .create_dma_region(arena, self.inner.dev_id, cq_mem.clone())
+            .create_dma_region(arena, inner.dev_id, cq_mem.clone())
             .await?;
         let wq_type = if is_send {
             GdmaQueueType::GDMA_SQ
         } else {
             GdmaQueueType::GDMA_RQ
         };
-        let doorbell = DoorbellPage::new(self.inner.doorbell.clone(), self.inner.dev_data.db_id)?;
-        let resp = BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let doorbell = DoorbellPage::new(inner.doorbell.clone(), inner.dev_data.db_id)?;
+        let resp = BnicDriver::new(&mut *gdma, inner.dev_id)
             .create_wq_obj(
                 arena,
                 self.config.vport,
@@ -493,12 +502,13 @@ impl<T: DeviceBacking> Vport<T> {
 
     /// Get the transmit configuration.
     pub async fn config_tx(&self) -> anyhow::Result<TxConfig> {
-        let mut gdma = self.inner.gdma.lock().await;
-        let resp = BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        let resp = BnicDriver::new(&mut *gdma, inner.dev_id)
             .config_vport_tx(
                 self.config.vport,
-                self.inner.dev_data.pdid,
-                self.inner.dev_data.db_id,
+                inner.dev_data.pdid,
+                inner.dev_data.db_id,
             )
             .await?;
 
@@ -510,8 +520,9 @@ impl<T: DeviceBacking> Vport<T> {
 
     /// Sets the receive configuration.
     pub async fn config_rx(&self, config: &RxConfig<'_>) -> anyhow::Result<()> {
-        let mut gdma = self.inner.gdma.lock().await;
-        BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        BnicDriver::new(&mut *gdma, inner.dev_id)
             .config_vport_rx(self.config.vport, config)
             .await?;
 
@@ -525,8 +536,9 @@ impl<T: DeviceBacking> Vport<T> {
                 return Ok(());
             }
         }
-        let mut gdma = self.inner.gdma.lock().await;
-        let hwc_activity_id = BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        let hwc_activity_id = BnicDriver::new(&mut *gdma, inner.dev_id)
             .move_vport_filter(self.config.vport, direction_to_vtl0)
             .await?;
         self.vport_state
@@ -547,8 +559,9 @@ impl<T: DeviceBacking> Vport<T> {
 
     /// Set the vport serial number
     pub async fn set_serial_no(&self, serial_no: u32) -> anyhow::Result<()> {
-        let mut gdma = self.inner.gdma.lock().await;
-        BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        BnicDriver::new(&mut *gdma, inner.dev_id)
             .set_vport_serial_no(self.config.vport, serial_no)
             .await?;
         Ok(())
@@ -556,8 +569,9 @@ impl<T: DeviceBacking> Vport<T> {
 
     /// Gets stats. Note that these are adapter-wide and not really per-vport.
     pub async fn query_stats(&self) -> anyhow::Result<ManaQueryStatisticsResponse> {
-        let mut gdma = self.inner.gdma.lock().await;
-        BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        BnicDriver::new(&mut *gdma, inner.dev_id)
             .query_stats(STATISTICS_FLAGS_ALL)
             .await
     }
@@ -567,16 +581,21 @@ impl<T: DeviceBacking> Vport<T> {
         &self,
         vport: u64,
     ) -> anyhow::Result<ManaQueryFilterStateResponse> {
-        let mut gdma = self.inner.gdma.lock().await;
-        BnicDriver::new(&mut *gdma, self.inner.dev_id)
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        BnicDriver::new(&mut *gdma, inner.dev_id)
             .query_filter_state(vport)
             .await
     }
 
     /// Destroys resources in `arena`.
     pub async fn destroy(&self, arena: ResourceArena) {
-        let mut gdma = self.inner.gdma.lock().await;
-        arena.destroy(&mut *gdma).await;
+        if let Some(inner) = self.inner_weak.upgrade() {
+            let mut gdma = inner.gdma.lock().await;
+            arena.destroy(&mut *gdma).await;
+        } else {
+            tracing::error!(id = self.id, "VPort::destroy reached on a VPort with a deallocated Inner");
+        }
     }
 
     /// Changes the target CPU for the given eq to `cpu`.
@@ -585,13 +604,19 @@ impl<T: DeviceBacking> Vport<T> {
         eq_id: u32,
         cpu: u32,
     ) -> anyhow::Result<Option<DeviceInterrupt>> {
-        let mut gdma = self.inner.gdma.lock().await;
-        gdma.retarget_eq(self.inner.dev_id, eq_id, cpu).await
+        let inner = self.realize_inner()?;
+        let mut gdma = inner.gdma.lock().await;
+        gdma.retarget_eq(inner.dev_id, eq_id, cpu).await
     }
 
     /// Registers for link status notification updates.
     pub async fn register_link_status_notifier(&self, sender: mesh::Sender<bool>) {
-        let mut vport_link_status = self.inner.vport_link_status.lock().await;
+        let Some(inner) = self.inner_weak.upgrade() else {
+            tracing::error!(id = self.id, "unexpected state reached on a disconnected VPort");
+            return;
+        };
+
+        let mut vport_link_status = inner.vport_link_status.lock().await;
         let vport_index = self.id as usize;
         let (send, connected) = match vport_link_status[vport_index] {
             // Send any pending notifications, whatever it is.
@@ -609,7 +634,8 @@ impl<T: DeviceBacking> Vport<T> {
 
     /// Returns an object that can allocate dma memory to be shared with the device.
     pub async fn dma_client(&self) -> Arc<dyn DmaClient> {
-        self.inner.gdma.lock().await.device().dma_client()
+        let inner = self.inner_weak.upgrade().expect("memory accesses should only be occurring on known-connected VPorts");
+        inner.gdma.lock().await.device().dma_client()
     }
 }
 
