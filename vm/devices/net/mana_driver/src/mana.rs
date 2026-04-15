@@ -366,7 +366,9 @@ pub struct Vport<T: DeviceBacking> {
 
 impl<T: DeviceBacking> Vport<T> {
     fn realize_inner(&self) -> anyhow::Result<Arc<Inner<T>>> {
-        self.inner_weak.upgrade().ok_or_else(|| anyhow!("VPort {} is invalid", self.id))
+        self.inner_weak
+            .upgrade()
+            .ok_or_else(|| anyhow!("VPort {} is invalid", self.id))
     }
 
     /// Returns the maximum number of transmit queues.
@@ -505,11 +507,7 @@ impl<T: DeviceBacking> Vport<T> {
         let inner = self.realize_inner()?;
         let mut gdma = inner.gdma.lock().await;
         let resp = BnicDriver::new(&mut *gdma, inner.dev_id)
-            .config_vport_tx(
-                self.config.vport,
-                inner.dev_data.pdid,
-                inner.dev_data.db_id,
-            )
+            .config_vport_tx(self.config.vport, inner.dev_data.pdid, inner.dev_data.db_id)
             .await?;
 
         let config = TxConfig {
@@ -594,7 +592,10 @@ impl<T: DeviceBacking> Vport<T> {
             let mut gdma = inner.gdma.lock().await;
             arena.destroy(&mut *gdma).await;
         } else {
-            tracing::error!(id = self.id, "VPort::destroy reached on a VPort with a deallocated Inner");
+            tracing::error!(
+                id = self.id,
+                "VPort::destroy reached on a VPort with a deallocated Inner"
+            );
         }
     }
 
@@ -612,7 +613,10 @@ impl<T: DeviceBacking> Vport<T> {
     /// Registers for link status notification updates.
     pub async fn register_link_status_notifier(&self, sender: mesh::Sender<bool>) {
         let Some(inner) = self.inner_weak.upgrade() else {
-            tracing::error!(id = self.id, "unexpected state reached on a disconnected VPort");
+            tracing::error!(
+                id = self.id,
+                "unexpected state reached on a disconnected VPort"
+            );
             return;
         };
 
@@ -634,7 +638,10 @@ impl<T: DeviceBacking> Vport<T> {
 
     /// Returns an object that can allocate dma memory to be shared with the device.
     pub async fn dma_client(&self) -> Arc<dyn DmaClient> {
-        let inner = self.inner_weak.upgrade().expect("memory accesses should only be occurring on known-connected VPorts");
+        let inner = self
+            .inner_weak
+            .upgrade()
+            .expect("memory accesses should only be occurring on known-connected VPorts");
         inner.gdma.lock().await.device().dma_client()
     }
 }

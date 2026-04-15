@@ -8,12 +8,16 @@ use crate::bnic_driver::BnicDriver;
 use crate::bnic_driver::RxConfig;
 use crate::bnic_driver::WqConfig;
 use crate::gdma_driver::GdmaDriver;
+use crate::mana::ManaDevice;
 use crate::mana::ResourceArena;
+use crate::mana::Vport;
 use chipset_device::mmio::ExternallyManagedMmioIntercepts;
 use gdma::VportConfig;
 use gdma_defs::GdmaDevType;
 use gdma_defs::GdmaQueueType;
+use gdma_defs::bnic::ManaQueryDeviceCfgResp;
 use net_backend::null::NullEndpoint;
+use page_pool_alloc::PagePoolAllocator;
 use pal_async::DefaultDriver;
 use pal_async::async_test;
 use pci_core::msi::MsiConnection;
@@ -262,4 +266,150 @@ async fn test_gdma_reconfig_vf(driver: DefaultDriver) {
         gdma.get_vf_reconfiguration_pending(),
         "vf_reconfiguration_pending should remain true after deregister_device"
     );
+}
+
+/// Creates a ManaDevice, obtains a Vport, then shuts down the device so that
+/// the Vport's `inner_weak` can no longer be upgraded.
+async fn create_orphaned_vport(
+    driver: &DefaultDriver,
+) -> Vport<EmulatedDevice<gdma::GdmaDevice, PagePoolAllocator>> {
+    let mem = DeviceTestMemory::new(128, false, "test_vport_orphan");
+    let msi_conn = MsiConnection::new();
+    let device = gdma::GdmaDevice::new(
+        &VmTaskDriverSource::new(SingleDriverBackend::new(driver.clone())),
+        mem.guest_memory(),
+        msi_conn.target(),
+        vec![VportConfig {
+            mac_address: [1, 2, 3, 4, 5, 6].into(),
+            endpoint: Box::new(NullEndpoint::new()),
+        }],
+        &mut ExternallyManagedMmioIntercepts,
+    );
+    let dma_client = mem.dma_client();
+    let device = EmulatedDevice::new(device, msi_conn, dma_client);
+    let dev_config = ManaQueryDeviceCfgResp {
+        pf_cap_flags1: 0.into(),
+        pf_cap_flags2: 0,
+        pf_cap_flags3: 0,
+        pf_cap_flags4: 0,
+        max_num_vports: 1,
+        reserved: 0,
+        max_num_eqs: 64,
+    };
+    let mana = ManaDevice::new(driver, device, 1, 1, None).await.unwrap();
+    let vport = mana.new_vport(0, None, &dev_config).await.unwrap();
+    let (result, _device) = mana.shutdown().await;
+    result.expect("shutdown should succeed");
+    vport
+}
+
+#[async_test]
+async fn test_vport_accessors_after_device_shutdown(driver: DefaultDriver) {
+    let vport = create_orphaned_vport(&driver).await;
+
+    // Config-based accessors don't depend on inner_weak and should still work.
+    assert_eq!(vport.id(), 0);
+    let _mac = vport.mac_address();
+    let _tx_queues = vport.max_tx_queues();
+    let _rx_queues = vport.max_rx_queues();
+    let _ent = vport.num_indirection_ent();
+    assert_eq!(vport.get_direction_to_vtl0().await, None);
+}
+
+#[async_test]
+async fn test_vport_operations_fail_after_device_shutdown(driver: DefaultDriver) {
+    let vport = create_orphaned_vport(&driver).await;
+
+    // gpa_mkey is the thinnest realize_inner wrapper; verify the error message.
+    let err = vport.gpa_mkey().unwrap_err();
+    assert!(
+        format!("{err}").contains("VPort 0 is invalid"),
+        "unexpected error: {err}"
+    );
+
+    // All async methods that go through realize_inner() should also return Err.
+    assert!(vport.config_tx().await.is_err());
+    assert!(
+        vport
+            .config_rx(&RxConfig {
+                rx_enable: None,
+                rss_enable: None,
+                hash_key: None,
+                default_rxobj: None,
+                indirection_table: None,
+            })
+            .await
+            .is_err()
+    );
+    let mut arena = ResourceArena::new();
+    assert!(vport.new_eq(&mut arena, PAGE_SIZE as u32, 0).await.is_err());
+    assert!(
+        vport
+            .new_wq(&mut arena, true, PAGE_SIZE as u32, PAGE_SIZE as u32, 0)
+            .await
+            .is_err()
+    );
+    assert!(vport.set_serial_no(42).await.is_err());
+    assert!(vport.query_stats().await.is_err());
+    assert!(vport.query_filter_state(0).await.is_err());
+    assert!(vport.retarget_interrupt(0, 0).await.is_err());
+
+    // move_filter with unknown cached state reaches realize_inner and fails.
+    assert!(vport.move_filter(1).await.is_err());
+}
+
+#[async_test]
+async fn test_vport_move_filter_cached_after_device_shutdown(driver: DefaultDriver) {
+    let mem = DeviceTestMemory::new(128, false, "test_vport_move_filter");
+    let msi_conn = MsiConnection::new();
+    let device = gdma::GdmaDevice::new(
+        &VmTaskDriverSource::new(SingleDriverBackend::new(driver.clone())),
+        mem.guest_memory(),
+        msi_conn.target(),
+        vec![VportConfig {
+            mac_address: [1, 2, 3, 4, 5, 6].into(),
+            endpoint: Box::new(NullEndpoint::new()),
+        }],
+        &mut ExternallyManagedMmioIntercepts,
+    );
+    let dma_client = mem.dma_client();
+    let device = EmulatedDevice::new(device, msi_conn, dma_client);
+    let dev_config = ManaQueryDeviceCfgResp {
+        pf_cap_flags1: 0.into(),
+        pf_cap_flags2: 0,
+        pf_cap_flags3: 0,
+        pf_cap_flags4: 0,
+        max_num_vports: 1,
+        reserved: 0,
+        max_num_eqs: 64,
+    };
+    let mana = ManaDevice::new(&driver, device, 1, 1, None).await.unwrap();
+
+    // Pre-populate the cached filter direction via VportState.
+    let vport_state = crate::mana::VportState::new(Some(true), None);
+    let vport = mana
+        .new_vport(0, Some(vport_state), &dev_config)
+        .await
+        .unwrap();
+    assert_eq!(vport.get_direction_to_vtl0().await, Some(true));
+
+    let (result, _device) = mana.shutdown().await;
+    result.expect("shutdown should succeed");
+
+    // Same direction uses cached state — returns Ok even after shutdown.
+    vport.move_filter(1).await.unwrap();
+
+    // Opposite direction needs realize_inner — returns Err.
+    assert!(vport.move_filter(0).await.is_err());
+}
+
+#[async_test]
+async fn test_vport_graceful_noop_after_device_shutdown(driver: DefaultDriver) {
+    let vport = create_orphaned_vport(&driver).await;
+
+    // destroy() and register_link_status_notifier() should not panic when
+    // inner_weak is invalid — they handle the None case gracefully.
+    let (sender, _receiver) = mesh::channel();
+    vport.register_link_status_notifier(sender).await;
+    vport.destroy(ResourceArena::new()).await;
 }
