@@ -279,14 +279,16 @@ impl<T: DeviceBacking> InspectMut for ManaEndpoint<T> {
     fn inspect_mut(&mut self, req: inspect::Request<'_>) {
         req.respond()
             .sensitivity_child("stats", SensitivityLevel::Safe, |req| {
-                let vport = self.vport.clone();
+                let vport = Arc::downgrade(&self.vport);
                 let deferred = req.defer();
                 self.spawner
                     .spawn("mana-stats", async move {
-                        let stats = if let Ok(stats) = vport.query_stats().await {
-                            stats
-                        } else {
-                            ManaQueryStatisticsResponse::new_zeroed()
+                        let stats = match vport.upgrade() {
+                            Some(vp) => vp
+                                .query_stats()
+                                .await
+                                .unwrap_or(ManaQueryStatisticsResponse::new_zeroed()),
+                            None => ManaQueryStatisticsResponse::new_zeroed(),
                         };
                         deferred.inspect(inspect::adhoc(|req| inspect_mana_stats(&stats, req)));
                     })
