@@ -553,6 +553,7 @@ fn parse_vnet_hdr(hdr: &VirtioNetHdr) -> RxMetadata {
         l4_checksum,
         l4_protocol,
         vlan: None,
+        raw_oob: None,
     }
 }
 

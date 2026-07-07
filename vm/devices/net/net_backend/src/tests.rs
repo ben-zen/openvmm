@@ -72,13 +72,13 @@ impl BufferAccess for Bufs {
     }
 
     fn write_header(&mut self, id: RxId, metadata: &RxMetadata) {
-        *self.inner.rx_metadata[id.0 as usize].lock() = Some(*metadata);
+        *self.inner.rx_metadata[id.0 as usize].lock() = Some(metadata.clone());
     }
 }
 
 impl Bufs {
     /// Returns the [`RxMetadata`] written for the given receive buffer, if any.
     pub fn rx_metadata(&self, id: RxId) -> Option<RxMetadata> {
-        *self.inner.rx_metadata[id.0 as usize].lock()
+        self.inner.rx_metadata[id.0 as usize].lock().clone()
     }
 }

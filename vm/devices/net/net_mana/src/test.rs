@@ -1275,6 +1275,7 @@ async fn test_vlan_tx_rx_roundtrip_direct_dma(driver: DefaultDriver) {
     assert_eq!(stats.rx_vlan_packets.get(), 1);
 
     let rx_vlan = rx_meta[0]
+        .clone()
         .expect("RX metadata should be present")
         .vlan
         .expect("RX metadata should carry VLAN");
@@ -1305,6 +1306,7 @@ async fn test_vlan_tx_rx_roundtrip_bounce_buffer(driver: DefaultDriver) {
     assert_eq!(stats.rx_vlan_packets.get(), 1);
 
     let rx_vlan = rx_meta[0]
+        .clone()
         .expect("RX metadata should be present")
         .vlan
         .expect("RX metadata should carry VLAN");
@@ -1332,7 +1334,7 @@ async fn test_no_vlan_rx_metadata_when_untagged(driver: DefaultDriver) {
     assert_eq!(stats.tx_vlan_packets.get(), 0);
     assert_eq!(stats.rx_vlan_packets.get(), 0);
 
-    let rx = rx_meta[0].expect("RX metadata should be present");
+    let rx = rx_meta[0].clone().expect("RX metadata should be present");
     assert!(
         rx.vlan.is_none(),
         "RX metadata must not carry VLAN for an untagged packet"
@@ -1371,6 +1373,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     // Packet 0: no VLAN
     assert!(
         rx_meta[0]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .is_none()
@@ -1379,6 +1382,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     // Packet 1: VLAN 100
     assert_eq!(
         rx_meta[1]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .expect("RX should carry VLAN")
@@ -1387,6 +1391,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     );
     assert_eq!(
         rx_meta[1]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .expect("RX should carry VLAN")
@@ -1395,6 +1400,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     );
     assert_eq!(
         rx_meta[1]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .expect("RX should carry VLAN")
@@ -1405,6 +1411,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     // Packet 2: no VLAN
     assert!(
         rx_meta[2]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .is_none()
@@ -1413,6 +1420,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     // Packet 3: VLAN 4094
     assert_eq!(
         rx_meta[3]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .expect("RX should carry VLAN")
@@ -1421,6 +1429,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     );
     assert_eq!(
         rx_meta[3]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .expect("RX should carry VLAN")
@@ -1429,6 +1438,7 @@ async fn test_vlan_mixed_batch(driver: DefaultDriver) {
     );
     assert_eq!(
         rx_meta[3]
+            .clone()
             .expect("RX metadata should be present")
             .vlan
             .expect("RX should carry VLAN")

@@ -831,6 +831,7 @@ impl consomme::Client for Client<'_> {
                         L4Protocol::Unknown
                     },
                     vlan: None,
+                    raw_oob: None,
                 },
                 data,
             );

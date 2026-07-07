@@ -585,6 +585,7 @@ impl TxRxTask {
             transport_header_offset: oob.s_oob.trans_off(),
             max_segment_size: 0,
             vlan,
+            raw_oob: None,
         };
 
         if sqe.header.params.client_oob_in_sgl() {

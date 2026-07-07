@@ -272,7 +272,7 @@ impl MockQueueHandle {
             .expect("no pending RX buffer available");
         self.rx_ready
             .lock()
-            .push_back((rx_id, data.to_vec(), *metadata));
+            .push_back((rx_id, data.to_vec(), metadata.clone()));
         if let Some(waker) = self.ready_waker.lock().take() {
             waker.wake();
         }

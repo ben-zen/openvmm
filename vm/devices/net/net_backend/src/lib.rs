@@ -249,6 +249,20 @@ pub trait Queue: Send + InspectMut {
     fn queue_stats(&self) -> Option<&dyn BackendQueueStats> {
         None // Default implementation - not all queues implement stats
     }
+
+    /// Enables or disables preservation of raw, backend-native OOB/PPI
+    /// bytes in [`RxMetadata::raw_oob`]/[`TxMetadata::raw_oob`].
+    ///
+    /// This is intended for diagnostic consumers (e.g. packet capture) that
+    /// want lossless OOB data. Backends that don't support raw OOB capture
+    /// may ignore this call; `raw_oob` will simply remain `None`.
+    ///
+    /// Backends should avoid the extra copy into `raw_oob` while capture is
+    /// disabled, since this method is called on the hot data path only when
+    /// a consumer actually needs the bytes.
+    fn set_oob_capture(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
 }
 
 /// Frontend-owned access to guest receive buffers.
@@ -321,8 +335,40 @@ pub struct RxBufferSegment {
     pub len: u32,
 }
 
+/// Identifies the backend-native format of the bytes carried in
+/// [`RawOob::data`], so that a diagnostic consumer (e.g. packet capture)
+/// can interpret them without `net_backend` needing to understand the
+/// backend-specific layouts itself.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum OobSource {
+    /// Raw NetVSP RNDIS per-packet-info (PPI) bytes, as defined by
+    /// `rndisprot::PerPacketInfo` and friends.
+    NetvspRndisPpi,
+    /// Raw MANA receive completion out-of-band bytes
+    /// (`gdma_defs::bnic::ManaRxcompOob`).
+    ManaRxcompOob,
+    /// Raw MANA transmit out-of-band bytes (`gdma_defs::bnic::ManaTxOob`).
+    ManaTxOob,
+}
+
+/// Backend-native out-of-band/per-packet-info bytes, preserved verbatim
+/// for diagnostic purposes (e.g. enriching packet captures). These bytes
+/// are opaque to `net_backend`; a diagnostic consumer interprets them
+/// using [`RawOob::source`].
+///
+/// Backends should only populate this when a diagnostic consumer has
+/// requested it (see [`Queue::set_oob_capture`]) to avoid the extra copy
+/// on the hot path when nobody is capturing.
+#[derive(Debug, Clone)]
+pub struct RawOob {
+    /// Identifies the format of `data`.
+    pub source: OobSource,
+    /// The exact backend-native OOB bytes.
+    pub data: Vec<u8>,
+}
+
 /// Receive packet metadata.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct RxMetadata {
     /// The offset of the packet data from the beginning of the receive buffer.
     pub offset: usize,
@@ -338,6 +384,10 @@ pub struct RxMetadata {
     /// is populated. Only applies when traffic is being received over an L2 connection,
     /// so L3-only or above traffic will not use this option.
     pub vlan: Option<VlanMetadata>,
+    /// Raw backend-native OOB bytes for this packet, populated only when a
+    /// diagnostic consumer has enabled OOB capture (see
+    /// [`Queue::set_oob_capture`]).
+    pub raw_oob: Option<RawOob>,
 }
 
 impl Default for RxMetadata {
@@ -349,6 +399,7 @@ impl Default for RxMetadata {
             l4_checksum: RxChecksumState::Unknown,
             l4_protocol: L4Protocol::Unknown,
             vlan: None,
+            raw_oob: None,
         }
     }
 }
@@ -438,6 +489,10 @@ pub struct TxMetadata {
     /// is populated. Only applies when traffic is being sent over an L2 connection,
     /// so L3-only or above traffic will not use this option.
     pub vlan: Option<VlanMetadata>,
+    /// Raw backend-native OOB bytes for this packet, populated only when a
+    /// diagnostic consumer has enabled OOB capture (see
+    /// [`Queue::set_oob_capture`]).
+    pub raw_oob: Option<RawOob>,
 }
 
 /// Flags affecting transmit behavior.
@@ -485,6 +540,7 @@ impl Default for TxMetadata {
             transport_header_offset: 0,
             max_segment_size: 0,
             vlan: None,
+            raw_oob: None,
         }
     }
 }

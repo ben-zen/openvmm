@@ -1003,6 +1003,7 @@ impl<T: DeviceBacking + Send> Queue for ManaQueue<T> {
                                 l4_checksum,
                                 l4_protocol,
                                 vlan: vlantag,
+                                raw_oob: None,
                             },
                         );
                         if rx.bounced_len_with_padding > 0 {
