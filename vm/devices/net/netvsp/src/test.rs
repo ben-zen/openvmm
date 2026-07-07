@@ -7688,6 +7688,79 @@ async fn vlan_tx_counter_increments(driver: DefaultDriver) {
     );
 }
 
+/// Verify that NetVSP preserves the raw, verbatim RNDIS PPI bytes in
+/// `TxMetadata::raw_oob`, in addition to parsing them into the normalized
+/// `TxMetadata` fields (checksum flags, vlan, etc.). This is what allows
+/// `net_packet_capture` to enrich pcaps with lossless PPI data (see
+/// `net_backend::OobSource::NetvspRndisPpi`).
+#[async_test]
+async fn tx_raw_ppi_bytes_are_captured(driver: DefaultDriver) {
+    let endpoint_state = TestNicEndpointState::new();
+    let endpoint = TestNicEndpoint::new(Some(endpoint_state.clone()));
+    let nic = Nic::builder().build(
+        &VmTaskDriverSource::new(SingleDriverBackend::new(driver.clone())),
+        Guid::new_random(),
+        Box::new(endpoint),
+        [1, 2, 3, 4, 5, 6].into(),
+        0,
+    );
+
+    let mut nic_dev = TestNicDevice::new_with_nic(&driver, nic).await;
+    nic_dev.start_vmbus_channel();
+    let mut channel = nic_dev.connect_vmbus_channel().await;
+    channel
+        .initialize(0, protocol::NdisConfigCapabilities::new())
+        .await;
+    channel
+        .send_rndis_control_message(
+            rndisprot::MESSAGE_TYPE_INITIALIZE_MSG,
+            rndisprot::InitializeRequest {
+                request_id: 1,
+                major_version: rndisprot::MAJOR_VERSION,
+                minor_version: rndisprot::MINOR_VERSION,
+                max_transfer_size: 0,
+            },
+            &[],
+        )
+        .await;
+    let _: rndisprot::InitializeComplete = channel
+        .read_rndis_control_message(rndisprot::MESSAGE_TYPE_INITIALIZE_CMPLT)
+        .await
+        .unwrap();
+
+    let data = build_ipv4_tcp_packet();
+    let vlan_info = rndisprot::EthVlanInfo::read_from_bytes(&(42u32 << 4).to_le_bytes()).unwrap();
+    // tcp_checksum=true, udp_checksum=false, lso=false: PPI region is
+    // [PerPacketInfo + TxTcpIpChecksumInfo][PerPacketInfo + EthVlanInfo].
+    channel
+        .send_rndis_packet_offload_with_vlan(&data, true, false, false, vlan_info)
+        .await;
+    let completion = channel.read_rndis_packet_complete_message().await.unwrap();
+    assert_eq!(completion.status, protocol::Status::SUCCESS);
+
+    let tx_metadata = endpoint_state.lock().tx_metadata.clone();
+    assert_eq!(tx_metadata.len(), 1);
+    let raw_oob = tx_metadata[0]
+        .raw_oob
+        .as_ref()
+        .expect("TxMetadata::raw_oob should be populated when PPI is present");
+    assert_eq!(raw_oob.source, net_backend::OobSource::NetvspRndisPpi);
+
+    let expected_len = 2 * size_of::<rndisprot::PerPacketInfo>()
+        + size_of::<rndisprot::TxTcpIpChecksumInfo>()
+        + size_of::<rndisprot::EthVlanInfo>();
+    assert_eq!(
+        raw_oob.data.len(),
+        expected_len,
+        "raw PPI bytes should cover every PPI entry verbatim"
+    );
+
+    // The VLAN PPI entry is written last, so its payload (the raw
+    // EthVlanInfo bytes we sent) should be the final bytes of raw_oob.data.
+    let vlan_tail = &raw_oob.data[raw_oob.data.len() - size_of::<rndisprot::EthVlanInfo>()..];
+    assert_eq!(vlan_tail, vlan_info.as_bytes());
+}
+
 #[async_test]
 async fn vlan_rx_counter_increments(driver: DefaultDriver) {
     let endpoint_state = TestNicEndpointState::new();

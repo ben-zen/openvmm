@@ -389,6 +389,7 @@ async fn test_lso_segment_coalescing_only_header(driver: DefaultDriver) {
     expected_stats.as_mut().unwrap().tx_errors.add(1);
     let test_config = Some(ManaTestConfiguration {
         allow_lso_pkt_with_one_sge: true,
+        ..Default::default()
     });
     send_test_packet(
         driver.clone(),
@@ -980,6 +981,7 @@ async fn test_endpoint(
         )
         .await
         .unwrap();
+    queues[0].set_oob_capture(test_configuration.oob_capture_enabled);
 
     // Post initial RX buffers.
     queues[0].rx_avail(&mut pool, &(1..128u32).map(RxId).collect::<Vec<_>>());
@@ -1338,6 +1340,60 @@ async fn test_no_vlan_rx_metadata_when_untagged(driver: DefaultDriver) {
     assert!(
         rx.vlan.is_none(),
         "RX metadata must not carry VLAN for an untagged packet"
+    );
+}
+
+/// Verify that raw `ManaRxcompOob` bytes are absent by default (capture
+/// disabled), and present with the expected size/content when
+/// `Queue::set_oob_capture(true)` has been invoked.
+#[async_test]
+async fn test_rx_raw_oob_capture_disabled_by_default(driver: DefaultDriver) {
+    let mut pkt_builder = TxPacketBuilder::new();
+    build_tx_segments(1138, 1, false, &mut pkt_builder);
+
+    let (_stats, rx_meta) = test_endpoint(
+        driver,
+        GuestDmaMode::DirectDma,
+        &pkt_builder,
+        1,
+        1,
+        ManaTestConfiguration::default(),
+    )
+    .await;
+
+    let rx = rx_meta[0].clone().expect("RX metadata should be present");
+    assert!(
+        rx.raw_oob.is_none(),
+        "raw_oob must be absent when OOB capture is disabled"
+    );
+}
+
+#[async_test]
+async fn test_rx_raw_oob_captured_when_enabled(driver: DefaultDriver) {
+    let mut pkt_builder = TxPacketBuilder::new();
+    build_tx_segments(1138, 1, false, &mut pkt_builder);
+
+    let (_stats, rx_meta) = test_endpoint(
+        driver,
+        GuestDmaMode::DirectDma,
+        &pkt_builder,
+        1,
+        1,
+        ManaTestConfiguration {
+            oob_capture_enabled: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let rx = rx_meta[0].clone().expect("RX metadata should be present");
+    let raw_oob = rx
+        .raw_oob
+        .expect("raw_oob should be populated when OOB capture is enabled");
+    assert_eq!(raw_oob.source, net_backend::OobSource::ManaRxcompOob);
+    assert_eq!(
+        raw_oob.data.len(),
+        size_of::<gdma_defs::bnic::ManaRxcompOob>()
     );
 }
 

@@ -2569,6 +2569,15 @@ impl<T: RingMem> NetChannel<T> {
                     request.per_packet_info_length as usize,
                 )
                 .ok_or(WorkerError::RndisMessageTooSmall)?;
+
+            // Preserve the raw, verbatim PPI bytes (all entries, including
+            // any types not parsed below) for diagnostic packet capture.
+            // `PagedRange` is `Copy`, so this doesn't disturb `ppi` below.
+            metadata.raw_oob = Some(net_backend::RawOob {
+                source: net_backend::OobSource::NetvspRndisPpi,
+                data: ppi.reader(mem).read_all()?,
+            });
+
             while !ppi.is_empty() {
                 let h: rndisprot::PerPacketInfo = ppi.reader(mem).read_plain()?;
                 if h.size == 0 {

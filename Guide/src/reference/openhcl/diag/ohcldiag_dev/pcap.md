@@ -51,6 +51,50 @@ There are many software that are available to load the pcap file. The most commo
 used one is `wireshark`. Copy the `*.pcap` files generated on the test machine and then
 open them up on the desired software.
 
+## Out-of-band (OOB) / per-packet-info (PPI) enrichment
+
+In addition to the raw Ethernet frame, captured packets are enriched with the
+out-of-band/per-packet-info (OOB/PPI) data that NetVSP and MANA pass alongside
+the frame -- things like checksum offload state, LSO/USO segmentation
+parameters, VLAN tag, and (for MANA) the RSS hash. This data would otherwise
+be invisible in the pcap, since it never appears in the wire bytes.
+
+The raw, backend-native bytes (e.g. NetVSP's RNDIS per-packet-info entries,
+or MANA's `ManaRxcompOob`) are attached verbatim to each captured packet as a
+standard pcapng "custom binary option" (option code `0x0BAD`), scoped to
+Microsoft's IANA Private Enterprise Number (311). This is a lossless,
+spec-conformant pcapng extension: tools that don't understand it (including
+older Wireshark versions) simply ignore it, so existing pcap workflows are
+unaffected.
+
+Coverage today:
+
+* **NetVSP TX**: the full, raw per-packet-info byte range is always captured
+  when the guest sends PPI (checksum/LSO/VLAN info), independent of whether
+  the individual PPI type is one NetVSP currently parses.
+* **MANA RX**: raw `ManaRxcompOob` bytes (including the RSS hash, which has
+  no equivalent in the normalized capture path) are captured when OOB
+  capture is enabled on that queue.
+* NetVSP RX and MANA TX are not separately captured this way, since their
+  OOB data is fully derived from information already visible through the
+  normal capture path -- nothing is lost by omitting them.
+
+### Viewing OOB data in Wireshark
+
+To decode and display the OOB fields in Wireshark, install the companion
+Lua dissector at
+[`vm/devices/net/net_packet_capture/wireshark/openvmm_oob.lua`](https://github.com/microsoft/openvmm/blob/main/vm/devices/net/net_packet_capture/wireshark/openvmm_oob.lua):
+
+1. Copy the file into Wireshark's Personal Lua Plugins folder (find the
+   exact path via Wireshark's **Help > About Wireshark > Folders**), or load
+   it for a single session with `-X lua_script:openvmm_oob.lua`.
+2. Reload the capture (or restart Wireshark). Packets carrying OOB data will
+   show an "OpenVMM raw NetVSP/MANA OOB" section in the packet details pane.
+
+Without the plugin loaded, the OOB option is still present in the file (and
+visible as raw bytes in Wireshark's generic option display) -- the plugin is
+only needed to decode it into structured, named fields.
+
 ## Example packet capture commands
 
 In all of the below commands, `$vmname` should be replaced with the actual VM name. On

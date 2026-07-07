@@ -47,8 +47,10 @@ use net_backend::Endpoint;
 use net_backend::EndpointAction;
 use net_backend::L4Protocol;
 use net_backend::MultiQueueSupport;
+use net_backend::OobSource;
 use net_backend::Queue;
 use net_backend::QueueConfig;
+use net_backend::RawOob;
 use net_backend::RssConfig;
 use net_backend::RxBufferSegment;
 use net_backend::RxChecksumState;
@@ -95,6 +97,10 @@ const TX_BOUNCE_BUFFER_PAGE_LIMIT: u32 = 64;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ManaTestConfiguration {
     pub allow_lso_pkt_with_one_sge: bool,
+    /// When true, `Queue::set_oob_capture(true)` is invoked on the test
+    /// queue so raw `ManaRxcompOob` bytes are preserved in
+    /// `RxMetadata::raw_oob`.
+    pub oob_capture_enabled: bool,
 }
 
 pub struct ManaEndpoint<T: DeviceBacking> {
@@ -380,6 +386,7 @@ impl<T: DeviceBacking> ManaEndpoint<T> {
             force_tx_header_bounce: false,
             rx_buffer_segments: Vec::new(),
             stats: QueueStats::default(),
+            oob_capture_enabled: false,
             #[cfg(test)]
             test_configuration: self.test_configuration,
         };
@@ -619,6 +626,11 @@ pub struct ManaQueue<T: DeviceBacking> {
     rx_buffer_segments: Vec<RxBufferSegment>,
 
     stats: QueueStats,
+
+    /// When set, raw `ManaRxcompOob` bytes are preserved verbatim in
+    /// `RxMetadata::raw_oob` for diagnostic packet capture. Toggled via
+    /// [`Queue::set_oob_capture`].
+    oob_capture_enabled: bool,
 
     #[cfg(test)]
     test_configuration: ManaTestConfiguration,
@@ -994,6 +1006,14 @@ impl<T: DeviceBacking + Send> Queue for ManaQueue<T> {
                             VlanMetadata::new().with_vlan_id(rx_oob.flags.rx_vlan_id() as u16)
                         });
                         let len = rx_oob.ppi[0].pkt_len.into();
+                        // ManaRxcompOob carries fields with no net_backend::RxMetadata
+                        // equivalent (e.g. ppi[0].pkt_hash/rx_hashtype RSS hash), so
+                        // preserve the raw bytes verbatim for diagnostic packet
+                        // capture when requested.
+                        let raw_oob = self.oob_capture_enabled.then(|| RawOob {
+                            source: OobSource::ManaRxcompOob,
+                            data: cqe.data[..size_of::<ManaRxcompOob>()].to_vec(),
+                        });
                         pool.write_header(
                             rx.id,
                             &RxMetadata {
@@ -1003,7 +1023,7 @@ impl<T: DeviceBacking + Send> Queue for ManaQueue<T> {
                                 l4_checksum,
                                 l4_protocol,
                                 vlan: vlantag,
-                                raw_oob: None,
+                                raw_oob,
                             },
                         );
                         if rx.bounced_len_with_padding > 0 {
@@ -1123,6 +1143,10 @@ impl<T: DeviceBacking + Send> Queue for ManaQueue<T> {
 
     fn queue_stats(&self) -> Option<&dyn BackendQueueStats> {
         Some(&self.stats)
+    }
+
+    fn set_oob_capture(&mut self, enabled: bool) {
+        self.oob_capture_enabled = enabled;
     }
 }
 
