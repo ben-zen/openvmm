@@ -5266,11 +5266,10 @@ impl<T: 'static + RingMem> NetChannel<T> {
 
                         if let Some(version) = version {
                             tracelimit::info_ratelimited!(?version, "network negotiated");
-                            if version >= Version::V61 {
-                                // Update the packet size so that the appropriate padding is
-                                // appended for picky Windows guests.
-                                self.packet_size = PacketSize::V61;
-                            }
+
+                            // Ensure packet size is set appropriately for the protocol version.
+                            self.packet_size = version.into();
+
                             *initializing = Some(InitState {
                                 version,
                                 ndis_config: None,
