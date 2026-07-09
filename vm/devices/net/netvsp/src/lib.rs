@@ -478,9 +478,10 @@ enum PacketSize {
 
 impl From<Version> for PacketSize {
     fn from(v: Version) -> Self {
-        match v {
-            Version::V61 => PacketSize::V61,
-            _ => PacketSize::V1,
+        if v >= Version::V61 {
+            PacketSize::V61
+        } else {
+            PacketSize::V1
         }
     }
 }
