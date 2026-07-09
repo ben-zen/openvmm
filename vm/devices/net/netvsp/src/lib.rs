@@ -2156,7 +2156,7 @@ fn read_packet_data<T: IntoBytes + FromBytes + Immutable + KnownLayout>(
     reader
         .read_plain()
         .map_err(PacketError::Access)
-        .inspect_err(|_| tracelimit::error_ratelimited!("read_packet_data"))
+        .inspect_err(|_| tracelimit::info_ratelimited!("read_packet_data"))
 }
 
 fn parse_packet<'a, T: RingMem>(
@@ -2178,7 +2178,7 @@ fn parse_packet<'a, T: RingMem>(
                 let header: protocol::MessageHeader = reader
                     .read_plain()
                     .map_err(PacketError::Access)
-                    .inspect_err(|_| tracelimit::error_ratelimited!("parsing completion header"))?;
+                    .inspect_err(|_| tracelimit::info_ratelimited!("parsing completion header"))?;
                 match header.message_type {
                     protocol::MESSAGE1_TYPE_SEND_RNDIS_PACKET_COMPLETE => {
                         PacketData::RndisPacketComplete(read_packet_data(&mut reader)?)
@@ -2198,7 +2198,7 @@ fn parse_packet<'a, T: RingMem>(
     let header: protocol::MessageHeader = reader
         .read_plain()
         .map_err(PacketError::Access)
-        .inspect_err(|_| tracelimit::error_ratelimited!("parsing data packet header"))?;
+        .inspect_err(|_| tracelimit::info_ratelimited!("parsing data packet header"))?;
     let data = match header.message_type {
         protocol::MESSAGE_TYPE_INIT => PacketData::Init(read_packet_data(&mut reader)?),
         protocol::MESSAGE1_TYPE_SEND_NDIS_VERSION if version >= Some(Version::V1) => {
