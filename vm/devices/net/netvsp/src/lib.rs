@@ -4975,7 +4975,7 @@ impl<T: RingMem + 'static> Worker<T> {
                     let packet_size = state.buffers.version.into();
                     if self.channel.packet_size != packet_size {
                         // Ensure we're not sending the incorrect packet length to guests.
-                        // Some guests will care significantly more than others.
+                        // Guests with less-compatible, older, or more stringent netvsc would drop packets otherwise.
                         tracelimit::info_ratelimited!(
                             channel_idx = self.channel_idx,
                             "updating packet size"
