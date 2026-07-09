@@ -746,11 +746,7 @@ impl Inspect for PrimaryChannelState {
                     PendingLinkAction::Default => "None".to_string(),
                 },
             )
-            .sensitivity_field(
-                "version",
-                SensitivityLevel::Safe,
-                self.version
-            );
+            .sensitivity_field("version", SensitivityLevel::Safe, self.version);
     }
 }
 
@@ -925,7 +921,7 @@ impl PrimaryChannelState {
         tx_spread_sent: bool,
         guest_link_down: bool,
         pending_link_action: Option<bool>,
-        version: Version
+        version: Version,
     ) -> Result<Self, NetRestoreError> {
         // Restore control messages.
         let control_messages_len = control_messages.iter().map(|msg| msg.data.len()).sum();
@@ -2154,7 +2150,10 @@ impl Packet<'_> {
 fn read_packet_data<T: IntoBytes + FromBytes + Immutable + KnownLayout>(
     reader: &mut impl MemoryRead,
 ) -> Result<T, PacketError> {
-    reader.read_plain().map_err(PacketError::Access).inspect_err(|_| tracing::error!("read_packet_data"))
+    reader
+        .read_plain()
+        .map_err(PacketError::Access)
+        .inspect_err(|_| tracelimit::error_ratelimited!("read_packet_data"))
 }
 
 fn parse_packet<'a, T: RingMem>(
@@ -2173,8 +2172,10 @@ fn parse_packet<'a, T: RingMem>(
                 PacketData::SwitchDataPathCompletion
             } else {
                 let mut reader = completion.reader();
-                let header: protocol::MessageHeader =
-                    reader.read_plain().map_err(PacketError::Access).inspect_err(|_| tracing::error!("parsing completion header"))?;
+                let header: protocol::MessageHeader = reader
+                    .read_plain()
+                    .map_err(PacketError::Access)
+                    .inspect_err(|_| tracelimit::error_ratelimited!("parsing completion header"))?;
                 match header.message_type {
                     protocol::MESSAGE1_TYPE_SEND_RNDIS_PACKET_COMPLETE => {
                         PacketData::RndisPacketComplete(read_packet_data(&mut reader)?)
@@ -2191,7 +2192,10 @@ fn parse_packet<'a, T: RingMem>(
     };
 
     let mut reader = packet.reader();
-    let header: protocol::MessageHeader = reader.read_plain().map_err(PacketError::Access).inspect_err(|_| tracing::error!("parsing data packet header"))?;
+    let header: protocol::MessageHeader = reader
+        .read_plain()
+        .map_err(PacketError::Access)
+        .inspect_err(|_| tracelimit::error_ratelimited!("parsing data packet header"))?;
     let data = match header.message_type {
         protocol::MESSAGE_TYPE_INIT => PacketData::Init(read_packet_data(&mut reader)?),
         protocol::MESSAGE1_TYPE_SEND_NDIS_VERSION if version >= Some(Version::V1) => {
@@ -4962,7 +4966,10 @@ impl<T: RingMem + 'static> Worker<T> {
                     if state.buffers.version >= Version::V61 {
                         // Ensure we're not sending the incorrect packet length to guests.
                         // Some guests will care significantly more than others.
-                        tracelimit::info_ratelimited!(channel_idx = self.channel_idx, "updating packet size");
+                        tracelimit::info_ratelimited!(
+                            channel_idx = self.channel_idx,
+                            "updating packet size"
+                        );
                         self.channel.packet_size = PacketSize::V61;
                     }
 
