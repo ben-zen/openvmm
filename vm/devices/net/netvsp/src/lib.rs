@@ -694,6 +694,7 @@ struct PrimaryChannelState {
     /// The serial number sent in the most recent VF association message, so
     /// that the matching disassociation message uses the same serial number.
     advertised_vf_serial_number: Option<u32>,
+    version: Version,
 }
 
 impl Inspect for PrimaryChannelState {
@@ -744,6 +745,11 @@ impl Inspect for PrimaryChannelState {
                     PendingLinkAction::Delay(up) => format!("Delay({:x?})", up),
                     PendingLinkAction::Default => "None".to_string(),
                 },
+            )
+            .sensitivity_field(
+                "version",
+                SensitivityLevel::Safe,
+                self.version
             );
     }
 }
@@ -883,7 +889,7 @@ pub enum RndisState {
 }
 
 impl PrimaryChannelState {
-    fn new(offload_config: OffloadConfig) -> Self {
+    fn new(offload_config: OffloadConfig, version: Version) -> Self {
         Self {
             guest_vf_state: PrimaryChannelGuestVfState::Initializing,
             is_data_path_switched: None,
@@ -901,6 +907,7 @@ impl PrimaryChannelState {
             guest_link_up: true,
             pending_link_action: PendingLinkAction::Default,
             advertised_vf_serial_number: None,
+            version,
         }
     }
 
@@ -918,6 +925,7 @@ impl PrimaryChannelState {
         tx_spread_sent: bool,
         guest_link_down: bool,
         pending_link_action: Option<bool>,
+        version: Version
     ) -> Result<Self, NetRestoreError> {
         // Restore control messages.
         let control_messages_len = control_messages.iter().map(|msg| msg.data.len()).sum();
@@ -1012,6 +1020,7 @@ impl PrimaryChannelState {
             guest_link_up: !guest_link_down,
             pending_link_action,
             advertised_vf_serial_number,
+            version,
         })
     }
 }
@@ -1766,6 +1775,7 @@ impl Nic {
                                 tx_spread_sent,
                                 guest_link_down,
                                 pending_link_action,
+                                version,
                             )?;
                             active.primary = Some(primary);
                         }
@@ -2144,7 +2154,7 @@ impl Packet<'_> {
 fn read_packet_data<T: IntoBytes + FromBytes + Immutable + KnownLayout>(
     reader: &mut impl MemoryRead,
 ) -> Result<T, PacketError> {
-    reader.read_plain().map_err(PacketError::Access)
+    reader.read_plain().map_err(PacketError::Access).inspect_err(|_| tracing::error!("read_packet_data"))
 }
 
 fn parse_packet<'a, T: RingMem>(
@@ -2164,7 +2174,7 @@ fn parse_packet<'a, T: RingMem>(
             } else {
                 let mut reader = completion.reader();
                 let header: protocol::MessageHeader =
-                    reader.read_plain().map_err(PacketError::Access)?;
+                    reader.read_plain().map_err(PacketError::Access).inspect_err(|_| tracing::error!("parsing completion header"))?;
                 match header.message_type {
                     protocol::MESSAGE1_TYPE_SEND_RNDIS_PACKET_COMPLETE => {
                         PacketData::RndisPacketComplete(read_packet_data(&mut reader)?)
@@ -2181,7 +2191,7 @@ fn parse_packet<'a, T: RingMem>(
     };
 
     let mut reader = packet.reader();
-    let header: protocol::MessageHeader = reader.read_plain().map_err(PacketError::Access)?;
+    let header: protocol::MessageHeader = reader.read_plain().map_err(PacketError::Access).inspect_err(|_| tracing::error!("parsing data packet header"))?;
     let data = match header.message_type {
         protocol::MESSAGE_TYPE_INIT => PacketData::Init(read_packet_data(&mut reader)?),
         protocol::MESSAGE1_TYPE_SEND_NDIS_VERSION if version >= Some(Version::V1) => {
@@ -4949,6 +4959,13 @@ impl<T: RingMem + 'static> Worker<T> {
                         stop.until_stopped(pending()).await?
                     };
 
+                    if state.buffers.version >= Version::V61 {
+                        // Ensure we're not sending the incorrect packet length to guests.
+                        // Some guests will care significantly more than others.
+                        tracelimit::info_ratelimited!(channel_idx = self.channel_idx, "updating packet size");
+                        self.channel.packet_size = PacketSize::V61;
+                    }
+
                     let result = self.channel.main_loop(stop, state, queue_state).await;
                     let msg = match result {
                         Ok(restart) => {
@@ -5051,6 +5068,7 @@ impl<T: 'static + RingMem> NetChannel<T> {
                     let state = ActiveState::new(
                         Some(PrimaryChannelState::new(
                             self.adapter.offload_support.clone(),
+                            initializing.version,
                         )),
                         recv_buffer.count,
                     );
@@ -5232,11 +5250,6 @@ impl<T: 'static + RingMem> NetChannel<T> {
                         if let Some(version) = version {
                             tracelimit::info_ratelimited!(?version, "network negotiated");
 
-                            if version >= Version::V61 {
-                                // Update the packet size so that the appropriate padding is
-                                // appended for picky Windows guests.
-                                self.packet_size = PacketSize::V61;
-                            }
                             *initializing = Some(InitState {
                                 version,
                                 ndis_config: None,
