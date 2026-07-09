@@ -703,7 +703,6 @@ struct PrimaryChannelState {
     /// The serial number sent in the most recent VF association message, so
     /// that the matching disassociation message uses the same serial number.
     advertised_vf_serial_number: Option<u32>,
-    version: Version,
 }
 
 impl Inspect for PrimaryChannelState {
@@ -754,8 +753,7 @@ impl Inspect for PrimaryChannelState {
                     PendingLinkAction::Delay(up) => format!("Delay({:x?})", up),
                     PendingLinkAction::Default => "None".to_string(),
                 },
-            )
-            .sensitivity_field("version", SensitivityLevel::Safe, self.version);
+            );
     }
 }
 
@@ -894,7 +892,7 @@ pub enum RndisState {
 }
 
 impl PrimaryChannelState {
-    fn new(offload_config: OffloadConfig, version: Version) -> Self {
+    fn new(offload_config: OffloadConfig) -> Self {
         Self {
             guest_vf_state: PrimaryChannelGuestVfState::Initializing,
             is_data_path_switched: None,
@@ -912,7 +910,6 @@ impl PrimaryChannelState {
             guest_link_up: true,
             pending_link_action: PendingLinkAction::Default,
             advertised_vf_serial_number: None,
-            version,
         }
     }
 
@@ -930,7 +927,6 @@ impl PrimaryChannelState {
         tx_spread_sent: bool,
         guest_link_down: bool,
         pending_link_action: Option<bool>,
-        version: Version,
     ) -> Result<Self, NetRestoreError> {
         // Restore control messages.
         let control_messages_len = control_messages.iter().map(|msg| msg.data.len()).sum();
@@ -1025,7 +1021,6 @@ impl PrimaryChannelState {
             guest_link_up: !guest_link_down,
             pending_link_action,
             advertised_vf_serial_number,
-            version,
         })
     }
 }
@@ -1780,7 +1775,6 @@ impl Nic {
                                 tx_spread_sent,
                                 guest_link_down,
                                 pending_link_action,
-                                version,
                             )?;
                             active.primary = Some(primary);
                         }
@@ -5080,7 +5074,6 @@ impl<T: 'static + RingMem> NetChannel<T> {
                     let state = ActiveState::new(
                         Some(PrimaryChannelState::new(
                             self.adapter.offload_support.clone(),
-                            initializing.version,
                         )),
                         recv_buffer.count,
                     );
