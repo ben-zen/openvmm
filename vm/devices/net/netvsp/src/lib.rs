@@ -4833,6 +4833,8 @@ impl Coordinator {
             self.num_queues = num_queues;
         }
 
+        // Determining packet size before taking mutable borrows
+        let packet_size = state.buffers.version.into();
         self.active_packet_filter = self.workers[0].state().unwrap().channel.packet_filter;
         // Provide the queue and receive buffer ranges for each worker.
         for (((worker, mut queue), rx_buffer), initial) in self
@@ -4861,6 +4863,10 @@ impl Coordinator {
                     ready_state.state.pending_rx_packets.clear();
                     ready_state.reset_tx_after_endpoint_stop();
                 }
+
+                // Ensure we're sending the negotiated packet size.
+                // Guests with less-compatible, older, or more stringent netvsc would drop packets otherwise.
+                worker.channel.packet_size = packet_size;
             }
         }
 
@@ -4971,17 +4977,6 @@ impl<T: RingMem + 'static> Worker<T> {
                         // This task will be restarted when the queues are ready.
                         stop.until_stopped(pending()).await?
                     };
-
-                    let packet_size = state.buffers.version.into();
-                    if self.channel.packet_size != packet_size {
-                        // Ensure we're not sending the incorrect packet length to guests.
-                        // Guests with less-compatible, older, or more stringent netvsc would drop packets otherwise.
-                        tracelimit::info_ratelimited!(
-                            channel_idx = self.channel_idx,
-                            "updating packet size"
-                        );
-                        self.channel.packet_size = packet_size;
-                    }
 
                     let result = self.channel.main_loop(stop, state, queue_state).await;
                     let msg = match result {
