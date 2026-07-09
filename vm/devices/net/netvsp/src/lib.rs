@@ -468,12 +468,21 @@ struct NetChannel<T: RingMem> {
 }
 
 // Use an enum to give the compiler more visibility into the packet size.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum PacketSize {
     /// [`protocol::PACKET_SIZE_V1`]
     V1,
     /// [`protocol::PACKET_SIZE_V61`]
     V61,
+}
+
+impl From<Version> for PacketSize {
+    fn from(v: Version) -> Self {
+        match v {
+            Version::V61 => PacketSize::V61,
+            _ => PacketSize::V1,
+        }
+    }
 }
 
 /// Buffers used during packet processing.
@@ -4963,14 +4972,15 @@ impl<T: RingMem + 'static> Worker<T> {
                         stop.until_stopped(pending()).await?
                     };
 
-                    if state.buffers.version >= Version::V61 {
+                    let packet_size = state.buffers.version.into();
+                    if self.channel.packet_size != packet_size {
                         // Ensure we're not sending the incorrect packet length to guests.
                         // Some guests will care significantly more than others.
                         tracelimit::info_ratelimited!(
                             channel_idx = self.channel_idx,
                             "updating packet size"
                         );
-                        self.channel.packet_size = PacketSize::V61;
+                        self.channel.packet_size = packet_size;
                     }
 
                     let result = self.channel.main_loop(stop, state, queue_state).await;
