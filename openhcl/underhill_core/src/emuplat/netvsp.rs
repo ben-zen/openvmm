@@ -797,9 +797,12 @@ impl HclNetworkVFManagerWorker {
     /// timeout, or do not resolve at all.
     async fn revoke_vtl0_vf(&self, bus_control: &HclVpciBusControl) -> anyhow::Result<()> {
         let mut ctx = mesh::CancelContext::new().with_timeout(MAX_WAIT_TIMEOUT);
-        ctx.until_cancelled(bus_control.revoke_device().instrument(
-            tracing::info_span!("revoking vtl0 vf", vtl2_vfid = vtl2_vfid_from_bus_control(&self.vtl2_bus_control), vtl0_bus = %bus_control),
-        ))
+        let vtl0_id = bus_control.instance_id();
+        ctx.until_cancelled(bus_control.revoke_device().instrument(tracing::info_span!(
+            "revoking vtl0 vf",
+            vtl2_vfid = vtl2_vfid_from_bus_control(&self.vtl2_bus_control),
+            vtl0_bus = vfid_from_guid(&vtl0_id)
+        )))
         .await
         .unwrap_or_else(|cr| Err(anyhow!("vtl0 revoke timed out: {cr}")))
     }
